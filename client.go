@@ -324,6 +324,10 @@ func (c *httpClusterClient) clear(addrs []string) {
 		} else if cli.errcnt > 0 {
 			if cli.weight >= errWeight*uint64(cli.errcnt) {
 				cli.weight -= errWeight * uint64(cli.errcnt)
+				cli.errcnt = 0
+				if c.Len() >= minHeapSize {
+					heap.Fix(c, cli.index)
+				}
 			}
 		}
 	}
