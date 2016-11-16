@@ -311,6 +311,7 @@ func (c *httpClusterClient) add(addr string, client http.Client) {
 // update clients with new addrs, remove the no use client
 func (c *httpClusterClient) clear(addrs []string) {
 	c.Lock()
+	var rm []*httpWeightClient
 	for _, cli := range c.clients {
 		var has_cli bool
 		for _, addr := range addrs {
@@ -320,7 +321,8 @@ func (c *httpClusterClient) clear(addrs []string) {
 			}
 		}
 		if !has_cli {
-			heap.Remove(c, cli.index)
+			// heap.Remove(c, cli.index)
+			rm = append(rm, cli)
 		} else if cli.errcnt > 0 {
 			if cli.weight >= errWeight*uint64(cli.errcnt) {
 				cli.weight -= errWeight * uint64(cli.errcnt)
@@ -330,6 +332,11 @@ func (c *httpClusterClient) clear(addrs []string) {
 				}
 			}
 		}
+	}
+
+	for _, cli := range rm {
+		// p will up, down, or not move, so append it to rm list.
+		heap.Remove(c, cli.index)
 	}
 	c.Unlock()
 }
