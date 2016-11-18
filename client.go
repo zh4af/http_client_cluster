@@ -123,7 +123,7 @@ func New(scheme, host string, cfg Config) (*httpClusterClient, error) {
 	}
 	c.updateClientAddr()
 	go func(c *httpClusterClient) {
-		timer := time.NewTimer(30 * time.Second)
+		timer := time.NewTicker(30 * time.Second)
 		for {
 			select {
 			case <-timer.C:
@@ -224,6 +224,11 @@ func (a *authedAction) HTTPRequest() *http.Request {
 	return r
 }
 
+type weightClientStats struct {
+	UseCount   int64 `json:"user_count"`
+	ErrorCount int64 `json:"error_count"`
+}
+
 /*********************************************************************************
  带优先级的httpClient，weight越低优先级越高
  封装redirectFollowingHTTPClient
@@ -238,6 +243,7 @@ type httpWeightClient struct {
 	index    int
 	weight   uint64
 	errcnt   int
+	stats    weightClientStats
 }
 
 /************************************************************************
@@ -321,16 +327,15 @@ func (c *httpClusterClient) clear(addrs []string) {
 			}
 		}
 		if !has_cli {
-			// heap.Remove(c, cli.index)
 			rm = append(rm, cli)
 		} else if cli.errcnt > 0 {
-			if cli.weight >= errWeight*uint64(cli.errcnt) {
-				cli.weight -= errWeight * uint64(cli.errcnt)
-				cli.errcnt = 0
-				if c.Len() >= minHeapSize {
-					heap.Fix(c, cli.index)
-				}
-			}
+			// if cli.weight >= errWeight*uint64(cli.errcnt) {
+			// 	cli.weight -= errWeight * uint64(cli.errcnt)
+			// 	cli.errcnt = 0
+			// 	if c.Len() >= minHeapSize {
+			// 		heap.Fix(c, cli.index)
+			// 	}
+			// }
 		}
 	}
 
@@ -372,18 +377,19 @@ func (c *httpClusterClient) use(client *httpWeightClient) {
 	if c.Len() >= minHeapSize {
 		heap.Fix(c, client.index)
 	}
+	client.stats.UseCount++
 	c.Unlock()
 }
 
 func (c *httpClusterClient) done(client *httpWeightClient) {
-	c.Lock()
-	if client.weight > 0 {
-		client.weight--
-	}
-	if c.Len() >= minHeapSize {
-		heap.Fix(c, client.index)
-	}
-	c.Unlock()
+	// c.Lock()
+	// if client.weight > 0 {
+	// 	client.weight--
+	// }
+	// if c.Len() >= minHeapSize {
+	// 	heap.Fix(c, client.index)
+	// }
+	// c.Unlock()
 }
 
 func (c *httpClusterClient) occurErr(client *httpWeightClient, err error) {
@@ -394,14 +400,17 @@ func (c *httpClusterClient) occurErr(client *httpWeightClient, err error) {
 		if c.Len() >= minHeapSize {
 			heap.Fix(c, client.index)
 		}
+		client.stats.ErrorCount++
 	} else {
-		if client.errcnt > 0 {
-			client.weight -= errWeight
-			client.errcnt--
-			if c.Len() >= minHeapSize {
-				heap.Fix(c, client.index)
-			}
-		}
+		// if client.errcnt > 0 {
+		// 	if client.weight >= errWeight {
+		// 		client.weight -= errWeight
+		// 	}
+		// 	client.errcnt--
+		// 	if c.Len() >= minHeapSize {
+		// 		heap.Fix(c, client.index)
+		// 	}
+		// }
 	}
 	c.Unlock()
 }
@@ -440,6 +449,14 @@ func (c *httpClusterClient) updateClientAddr() {
 		}
 	}
 
+	// 统计打印
+	log.Println("#############clients stats: ###########", c.host)
+	for i := range c.clients {
+		log.Println("## ip :%s  use count :%d  index : %d  err total :%d  err peroid :%d  weights : %d",
+			c.clients[i].endpoint, c.clients[i].stats.UseCount, c.clients[i].index, c.clients[i].stats.ErrorCount,
+			c.clients[i].errcnt, c.clients[i].weight)
+
+	}
 	c.clear(ips)
 
 	for i := range ips {
